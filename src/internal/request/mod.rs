@@ -1,8 +1,17 @@
 use std::io::{self, Read};
 
+const BUFFER_SIZE: usize = 8;
+
+#[derive(Debug, PartialEq)]
+enum ParserState {
+    Initialized,
+    Done,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Request {
-    pub request_line: RequestLine,
+    pub request_line: Option<RequestLine>,
+    state: ParserState,
 }
 
 #[derive(Debug, PartialEq)]
@@ -12,21 +21,89 @@ pub struct RequestLine {
     pub method: String,
 }
 
-pub fn request_from_reader(mut reader: impl Read) -> io::Result<Request> {
-    let mut raw = String::new();
-    reader.read_to_string(&mut raw)?;
+impl Request {
+    fn new() -> Self {
+        Self {
+            request_line: None,
+            state: ParserState::Initialized,
+        }
+    }
 
-    let request_line_text = raw
-        .split("\r\n")
-        .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing request line"))?;
+    fn parse(&mut self, data: &[u8]) -> io::Result<usize> {
+        match self.state {
+            ParserState::Initialized => {
+                let (request_line, consumed) = parse_request_line(data)?;
 
-    let request_line = parse_request_line(request_line_text)?;
+                if consumed == 0 {
+                    return Ok(0);
+                }
 
-    Ok(Request { request_line })
+                self.request_line = Some(request_line);
+                self.state = ParserState::Done;
+
+                Ok(consumed)
+            }
+
+            ParserState::Done => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "parser is already done",
+            )),
+        }
+    }
 }
 
-fn parse_request_line(line: &str) -> io::Result<RequestLine> {
+pub fn request_from_reader(mut reader: impl Read) -> io::Result<Request> {
+    let mut request = Request::new();
+
+    let mut buffer = vec![0u8; BUFFER_SIZE];
+    let mut read_to_index = 0;
+
+    while request.state != ParserState::Done {
+        if read_to_index == buffer.len() {
+            buffer.resize(buffer.len() * 2, 0);
+        }
+
+        let bytes_read = reader.read(&mut buffer[read_to_index..])?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        read_to_index += bytes_read;
+
+        let consumed = request.parse(&buffer[..read_to_index])?;
+
+        if consumed > 0 {
+            buffer.copy_within(consumed..read_to_index, 0);
+            read_to_index -= consumed;
+        }
+    }
+
+    if request.state != ParserState::Done {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "incomplete request",
+        ));
+    }
+
+    Ok(request)
+}
+
+fn parse_request_line(data: &[u8]) -> io::Result<(RequestLine, usize)> {
+    let Some(pos) = find_crlf(data) else {
+        return Ok((
+            RequestLine {
+                method: String::new(),
+                request_target: String::new(),
+                http_version: String::new(),
+            },
+            0,
+        ));
+    };
+
+    let line = std::str::from_utf8(&data[..pos])
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid utf-8"))?;
+
     let parts: Vec<&str> = line.split(' ').collect();
 
     if parts.len() != 3 {
@@ -54,11 +131,18 @@ fn parse_request_line(line: &str) -> io::Result<RequestLine> {
         ));
     }
 
-    Ok(RequestLine {
-        method: method.to_string(),
-        request_target: request_target.to_string(),
-        http_version: "1.1".to_string(),
-    })
+    Ok((
+        RequestLine {
+            method: method.to_string(),
+            request_target: request_target.to_string(),
+            http_version: "1.1".to_string(),
+        },
+        pos + 2,
+    ))
+}
+
+fn find_crlf(data: &[u8]) -> Option<usize> {
+    data.windows(2).position(|window| window == b"\r\n")
 }
 
 #[cfg(test)]
