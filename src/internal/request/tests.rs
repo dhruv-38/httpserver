@@ -23,10 +23,9 @@ impl Read for ChunkReader {
             return Ok(0);
         }
 
-        let end = std::cmp::min(
-            self.pos + self.num_bytes_per_read,
-            self.data.len(),
-        );
+        let max_bytes = std::cmp::min(self.num_bytes_per_read, buf.len());
+
+        let end = std::cmp::min(self.pos + max_bytes, self.data.len());
 
         let chunk = &self.data[self.pos..end];
         let n = chunk.len();
@@ -95,6 +94,69 @@ fn invalid_method_request_line() {
 fn invalid_version_in_request_line() {
     let raw = "GET /coffee HTTP/1.0\r\nHost: localhost:42069\r\n\r\n";
 
+    let reader = ChunkReader::new(raw, 8);
+
+    let err = request_from_reader(reader);
+
+    assert!(err.is_err());
+}
+
+#[test]
+fn standard_headers() {
+    let raw = "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n";
+    let reader = ChunkReader::new(raw, 3);
+
+    let r = request_from_reader(reader).unwrap();
+
+    assert_eq!(r.headers.get("host").unwrap(), "localhost:42069");
+    assert_eq!(r.headers.get("user-agent").unwrap(), "curl/7.81.0");
+    assert_eq!(r.headers.get("accept").unwrap(), "*/*");
+}
+
+#[test]
+fn malformed_header() {
+    let raw = "GET / HTTP/1.1\r\nHost localhost:42069\r\n\r\n";
+    let reader = ChunkReader::new(raw, 3);
+
+    let err = request_from_reader(reader);
+
+    assert!(err.is_err());
+}
+
+#[test]
+fn empty_headers() {
+    let raw = "GET / HTTP/1.1\r\n\r\n";
+    let reader = ChunkReader::new(raw, 2);
+
+    let r = request_from_reader(reader).unwrap();
+
+    assert!(r.headers.get("host").is_none());
+}
+
+#[test]
+fn duplicate_headers() {
+    let raw = "GET / HTTP/1.1\r\nSet-Person: lane\r\nSet-Person: prime\r\n\r\n";
+    let reader = ChunkReader::new(raw, 4);
+
+    let r = request_from_reader(reader).unwrap();
+
+    assert_eq!(r.headers.get("set-person").unwrap(), "lane, prime");
+}
+
+#[test]
+fn case_insensitive_headers() {
+    let raw = "GET / HTTP/1.1\r\nHoSt: localhost:42069\r\nUSER-Agent: curl\r\n\r\n";
+    let reader = ChunkReader::new(raw, 5);
+
+    let r = request_from_reader(reader).unwrap();
+
+    assert_eq!(r.headers.get("host").unwrap(), "localhost:42069");
+    assert_eq!(r.headers.get("user-agent").unwrap(), "curl");
+}
+
+#[test]
+fn missing_end_of_headers() {
+    let raw = "GET / HTTP/1.1\r\nHost: localhost:42069\r\n";
     let reader = ChunkReader::new(raw, 8);
 
     let err = request_from_reader(reader);

@@ -1,3 +1,4 @@
+use crate::internal::headers::Headers;
 use std::io::{self, Read};
 
 const BUFFER_SIZE: usize = 8;
@@ -5,12 +6,14 @@ const BUFFER_SIZE: usize = 8;
 #[derive(Debug, PartialEq)]
 enum ParserState {
     Initialized,
+    ParsingHeaders,
     Done,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Request {
     pub request_line: Option<RequestLine>,
+    pub headers: Headers,
     state: ParserState,
 }
 
@@ -25,11 +28,28 @@ impl Request {
     fn new() -> Self {
         Self {
             request_line: None,
+            headers: Headers::new(),
             state: ParserState::Initialized,
         }
     }
 
     fn parse(&mut self, data: &[u8]) -> io::Result<usize> {
+        let mut total_consumed = 0;
+
+        while self.state != ParserState::Done {
+            let consumed = self.parse_single(&data[total_consumed..])?;
+
+            if consumed == 0 {
+                break;
+            }
+
+            total_consumed += consumed;
+        }
+
+        Ok(total_consumed)
+    }
+
+    fn parse_single(&mut self, data: &[u8]) -> io::Result<usize> {
         match self.state {
             ParserState::Initialized => {
                 let (request_line, consumed) = parse_request_line(data)?;
@@ -39,7 +59,21 @@ impl Request {
                 }
 
                 self.request_line = Some(request_line);
-                self.state = ParserState::Done;
+                self.state = ParserState::ParsingHeaders;
+
+                Ok(consumed)
+            }
+
+            ParserState::ParsingHeaders => {
+                let (consumed, done) = self.headers.parse(data)?;
+
+                if consumed == 0 {
+                    return Ok(0);
+                }
+
+                if done {
+                    self.state = ParserState::Done;
+                }
 
                 Ok(consumed)
             }
@@ -118,10 +152,7 @@ fn parse_request_line(data: &[u8]) -> io::Result<(RequestLine, usize)> {
     let version = parts[2];
 
     if !method.chars().all(|c| c.is_ascii_uppercase()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid method",
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid method"));
     }
 
     if version != "HTTP/1.1" {

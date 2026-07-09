@@ -20,6 +20,11 @@ fn main() -> std::io::Result<()> {
                 println!("- Method: {}", line.method);
                 println!("- Target: {}", line.request_target);
                 println!("- Version: {}", line.http_version);
+
+                println!("Headers:");
+                for (key, value) in request.headers.iter() {
+                    println!("- {}: {}", key, value);
+                }
             }
 
             Err(e) => {
