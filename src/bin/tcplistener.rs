@@ -14,7 +14,10 @@ fn main() -> std::io::Result<()> {
 
         match request_from_reader(stream) {
             Ok(request) => {
-                let line = request.request_line.unwrap();
+                let line = request
+                    .request_line
+                    .as_ref()
+                    .expect("parsed request should contain a request line");
 
                 println!("Request line:");
                 println!("- Method: {}", line.method);
@@ -25,10 +28,13 @@ fn main() -> std::io::Result<()> {
                 for (key, value) in request.headers.iter() {
                     println!("- {}: {}", key, value);
                 }
+
+                println!("Body:");
+                println!("{}", String::from_utf8_lossy(&request.body));
             }
 
-            Err(e) => {
-                eprintln!("Error parsing request: {}", e);
+            Err(error) => {
+                eprintln!("Error parsing request: {}", error);
             }
         }
 
