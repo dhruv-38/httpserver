@@ -7,6 +7,7 @@ const BUFFER_SIZE: usize = 8;
 enum ParserState {
     Initialized,
     ParsingHeaders,
+    ParsingBody,
     Done,
 }
 
@@ -14,6 +15,7 @@ enum ParserState {
 pub struct Request {
     pub request_line: Option<RequestLine>,
     pub headers: Headers,
+    pub body: Vec<u8>,
     state: ParserState,
 }
 
@@ -29,6 +31,7 @@ impl Request {
         Self {
             request_line: None,
             headers: Headers::new(),
+            body: Vec::new(),
             state: ParserState::Initialized,
         }
     }
@@ -72,10 +75,36 @@ impl Request {
                 }
 
                 if done {
-                    self.state = ParserState::Done;
+                    self.state = ParserState::ParsingBody;
                 }
 
                 Ok(consumed)
+            }
+
+            ParserState::ParsingBody => {
+                let Some(content_length_value) = self.headers.get("content-length") else {
+                    self.state = ParserState::Done;
+                    return Ok(0);
+                };
+
+                let content_length = content_length_value.parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "invalid content-length")
+                })?;
+
+                self.body.extend_from_slice(data);
+
+                if self.body.len() > content_length {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "body larger than content-length",
+                    ));
+                }
+
+                if self.body.len() == content_length {
+                    self.state = ParserState::Done;
+                }
+
+                Ok(data.len())
             }
 
             ParserState::Done => Err(io::Error::new(

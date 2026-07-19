@@ -163,3 +163,79 @@ fn missing_end_of_headers() {
 
     assert!(err.is_err());
 }
+
+#[test]
+fn standard_body() {
+    let raw =
+        "POST /submit HTTP/1.1\r\n\
+         Host: localhost:42069\r\n\
+         Content-Length: 13\r\n\
+         \r\n\
+         hello world!\n";
+
+    let reader = ChunkReader::new(raw, 3);
+
+    let r = request_from_reader(reader).unwrap();
+
+    assert_eq!(String::from_utf8(r.body).unwrap(), "hello world!\n");
+}
+
+#[test]
+fn empty_body_zero_content_length() {
+    let raw =
+        "POST /submit HTTP/1.1\r\n\
+         Host: localhost:42069\r\n\
+         Content-Length: 0\r\n\
+         \r\n";
+
+    let reader = ChunkReader::new(raw, 3);
+
+    let r = request_from_reader(reader).unwrap();
+
+    assert!(r.body.is_empty());
+}
+
+#[test]
+fn empty_body_without_content_length() {
+    let raw =
+        "GET / HTTP/1.1\r\n\
+         Host: localhost:42069\r\n\
+         \r\n";
+
+    let reader = ChunkReader::new(raw, 3);
+
+    let r = request_from_reader(reader).unwrap();
+
+    assert!(r.body.is_empty());
+}
+
+#[test]
+fn body_shorter_than_content_length() {
+    let raw =
+        "POST /submit HTTP/1.1\r\n\
+         Host: localhost:42069\r\n\
+         Content-Length: 20\r\n\
+         \r\n\
+         partial content";
+
+    let reader = ChunkReader::new(raw, 3);
+
+    let result = request_from_reader(reader);
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn no_content_length_but_body_exists() {
+    let raw =
+        "POST /submit HTTP/1.1\r\n\
+         Host: localhost:42069\r\n\
+         \r\n\
+         ignored body";
+
+    let reader = ChunkReader::new(raw, 3);
+
+    let r = request_from_reader(reader).unwrap();
+
+    assert!(r.body.is_empty());
+}

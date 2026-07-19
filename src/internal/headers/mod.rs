@@ -14,7 +14,7 @@ impl Headers {
     }
 
     pub fn get(&self, key: &str) -> Option<&String> {
-        self.map.get(key)
+        self.map.get(&key.to_ascii_lowercase())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
