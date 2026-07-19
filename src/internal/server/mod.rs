@@ -1,8 +1,12 @@
+use crate::internal::request::request_from_reader;
+use crate::internal::response::{
+    StatusCode, get_default_headers, write_headers, write_status_line
+};
 use std::io::{self, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -60,15 +64,13 @@ fn listen(listener: TcpListener, is_closed: Arc<AtomicBool>) {
 }
 
 fn handle(mut stream: TcpStream) -> io::Result<()> {
-    let response = concat!(
-        "HTTP/1.1 200 OK\r\n",
-        "Content-Type: text/plain\r\n",
-        "Content-Length: 13\r\n",
-        "\r\n",
-        "Hello World!\n"
-    );
+    // Read and parse the client's request first.
+    let _request = request_from_reader(&mut stream)?;
+    write_status_line(&mut stream, StatusCode::OK)?;
 
-    stream.write_all(response.as_bytes())?;
+    let headers = get_default_headers(0);
+    write_headers(&mut stream, &headers)?;
+
     stream.flush()?;
 
     Ok(())
@@ -79,12 +81,9 @@ impl Server {
         self.is_closed.store(true, Ordering::Release);
 
         if let Some(listener_thread) = self.listener_thread.take() {
-            listener_thread.join().map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    "listener thread panicked",
-                )
-            })?;
+            listener_thread
+                .join()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "listener thread panicked"))?;
         }
 
         Ok(())

@@ -17,10 +17,14 @@ impl Headers {
         self.map.get(&key.to_ascii_lowercase())
     }
 
+    pub fn set(&mut self, key: &str, value: &str) {
+        self.map.insert(key.to_ascii_lowercase(), value.to_string());
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
         self.map.iter()
     }
-    
+
     pub fn parse(&mut self, data: &[u8]) -> io::Result<(usize, bool)> {
         let Some(pos) = find_crlf(data) else {
             return Ok((0, false));
