@@ -1,7 +1,5 @@
 use crate::internal::request::{Request, request_from_reader};
-use crate::internal::response::{
-    StatusCode, get_default_headers, write_headers, write_status_line,
-};
+use crate::internal::response::{StatusCode, Writer as ResponseWriter, get_default_headers};
 use std::io::{self, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{
@@ -11,22 +9,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-#[derive(Debug)]
-pub struct HandlerError {
-    pub status_code: StatusCode,
-    pub message: String,
-}
-
-impl HandlerError {
-    pub fn new(status_code: StatusCode, message: impl Into<String>) -> Self {
-        Self {
-            status_code,
-            message: message.into(),
-        }
-    }
-}
-
-pub type Handler = fn(writer: &mut dyn Write, request: &Request) -> Result<(), HandlerError>;
+pub type Handler = for<'a> fn(&mut ResponseWriter<'a>, &Request) -> io::Result<()>;
 
 pub struct Server {
     is_closed: Arc<AtomicBool>,
@@ -36,8 +19,6 @@ pub struct Server {
 pub fn serve(port: u16, handler: Handler) -> io::Result<Server> {
     let listener = TcpListener::bind(("0.0.0.0", port))?;
 
-    // We use non-blocking mode so the listener thread can regularly check
-    // whether close() has requested that the server stop.
     listener.set_nonblocking(true)?;
 
     let is_closed = Arc::new(AtomicBool::new(false));
@@ -65,7 +46,6 @@ fn listen(listener: TcpListener, is_closed: Arc<AtomicBool>, handler: Handler) {
             }
 
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                // No connection is currently waiting.
                 thread::sleep(Duration::from_millis(50));
             }
 
@@ -81,37 +61,36 @@ fn listen(listener: TcpListener, is_closed: Arc<AtomicBool>, handler: Handler) {
 }
 
 fn handle(mut stream: TcpStream, handler: Handler) -> io::Result<()> {
-    let request = request_from_reader(&mut stream)?;
+    let request = match request_from_reader(&mut stream) {
+        Ok(request) => request,
 
-    let mut response_body = Vec::new();
+        Err(error) => {
+            let body = format!("Bad Request: {error}\n");
 
-    match handler(&mut response_body, &request) {
-        Ok(()) => {
-            write_status_line(&mut stream, StatusCode::OK)?;
+            {
+                let mut writer = ResponseWriter::new(&mut stream);
 
-            let headers = get_default_headers(response_body.len());
-            write_headers(&mut stream, &headers)?;
+                writer.write_status_line(StatusCode::BAD_REQUEST)?;
 
-            stream.write_all(&response_body)?;
+                let headers = get_default_headers(body.len());
+                writer.write_headers(headers)?;
+
+                writer.write_body(body.as_bytes())?;
+            }
+
+            stream.flush()?;
+            return Ok(());
         }
+    };
 
-        Err(handler_error) => {
-            write_handler_error(&mut stream, &handler_error)?;
-        }
+    {
+        let mut writer = ResponseWriter::new(&mut stream);
+        handler(&mut writer, &request)?;
     }
 
     stream.flush()?;
 
     Ok(())
-}
-
-fn write_handler_error(writer: &mut impl Write, error: &HandlerError) -> io::Result<()> {
-    write_status_line(writer, error.status_code)?;
-
-    let headers = get_default_headers(error.message.as_bytes().len());
-    write_headers(writer, &headers)?;
-
-    writer.write_all(error.message.as_bytes())
 }
 
 impl Server {
@@ -121,7 +100,7 @@ impl Server {
         if let Some(listener_thread) = self.listener_thread.take() {
             listener_thread
                 .join()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "listener thread panicked"))?;
+                .map_err(|_| io::Error::other("listener thread panicked"))?;
         }
 
         Ok(())

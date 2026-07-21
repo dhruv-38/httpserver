@@ -19,7 +19,10 @@ impl StatusCode {
     }
 }
 
-pub fn write_status_line(writer: &mut impl Write, status_code: StatusCode) -> io::Result<()> {
+pub fn write_status_line<W: Write + ?Sized>(
+    writer: &mut W,
+    status_code: StatusCode,
+) -> io::Result<()> {
     let reason_phrase = match status_code.as_u16() {
         200 => "OK",
         400 => "Bad Request",
@@ -45,13 +48,14 @@ pub fn get_default_headers(content_len: usize) -> Headers {
     headers
 }
 
-pub fn write_headers(writer: &mut impl Write, headers: &Headers) -> io::Result<()> {
+pub fn write_headers<W: Write + ?Sized>(writer: &mut W, headers: &Headers) -> io::Result<()> {
     for (key, value) in headers.iter() {
         let key = canonical_header_name(key);
 
         write!(writer, "{}: {}\r\n", key, value)?;
     }
 
+    // Empty line marks the end of the headers.
     writer.write_all(b"\r\n")
 }
 
@@ -73,4 +77,71 @@ fn canonical_header_name(key: &str) -> String {
     }
 
     result
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriterState {
+    Initialized,
+    StatusLineWritten,
+    HeadersWritten,
+    BodyWritten,
+}
+
+pub struct Writer<'a> {
+    inner: &'a mut dyn Write,
+    state: WriterState,
+}
+
+impl<'a> Writer<'a> {
+    pub fn new(inner: &'a mut dyn Write) -> Self {
+        Self {
+            inner,
+            state: WriterState::Initialized,
+        }
+    }
+
+    pub fn write_status_line(&mut self, status_code: StatusCode) -> io::Result<()> {
+        if self.state != WriterState::Initialized {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "status line must be written first",
+            ));
+        }
+
+        write_status_line(self.inner, status_code)?;
+        self.state = WriterState::StatusLineWritten;
+
+        Ok(())
+    }
+
+    pub fn write_headers(&mut self, headers: Headers) -> io::Result<()> {
+        if self.state != WriterState::StatusLineWritten {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "headers must be written after the status line",
+            ));
+        }
+
+        write_headers(self.inner, &headers)?;
+        self.state = WriterState::HeadersWritten;
+
+        Ok(())
+    }
+
+    pub fn write_body(&mut self, body: &[u8]) -> io::Result<usize> {
+        match self.state {
+            WriterState::HeadersWritten | WriterState::BodyWritten => {}
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "body must be written after the headers",
+                ));
+            }
+        }
+
+        self.inner.write_all(body)?;
+        self.state = WriterState::BodyWritten;
+
+        Ok(body.len())
+    }
 }

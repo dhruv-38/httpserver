@@ -103,7 +103,8 @@ fn invalid_version_in_request_line() {
 
 #[test]
 fn standard_headers() {
-    let raw = "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n";
+    let raw =
+        "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n";
     let reader = ChunkReader::new(raw, 3);
 
     let r = request_from_reader(reader).unwrap();
@@ -166,8 +167,7 @@ fn missing_end_of_headers() {
 
 #[test]
 fn standard_body() {
-    let raw =
-        "POST /submit HTTP/1.1\r\n\
+    let raw = "POST /submit HTTP/1.1\r\n\
          Host: localhost:42069\r\n\
          Content-Length: 13\r\n\
          \r\n\
@@ -182,8 +182,7 @@ fn standard_body() {
 
 #[test]
 fn empty_body_zero_content_length() {
-    let raw =
-        "POST /submit HTTP/1.1\r\n\
+    let raw = "POST /submit HTTP/1.1\r\n\
          Host: localhost:42069\r\n\
          Content-Length: 0\r\n\
          \r\n";
@@ -197,8 +196,7 @@ fn empty_body_zero_content_length() {
 
 #[test]
 fn empty_body_without_content_length() {
-    let raw =
-        "GET / HTTP/1.1\r\n\
+    let raw = "GET / HTTP/1.1\r\n\
          Host: localhost:42069\r\n\
          \r\n";
 
@@ -211,8 +209,7 @@ fn empty_body_without_content_length() {
 
 #[test]
 fn body_shorter_than_content_length() {
-    let raw =
-        "POST /submit HTTP/1.1\r\n\
+    let raw = "POST /submit HTTP/1.1\r\n\
          Host: localhost:42069\r\n\
          Content-Length: 20\r\n\
          \r\n\
@@ -227,8 +224,7 @@ fn body_shorter_than_content_length() {
 
 #[test]
 fn no_content_length_but_body_exists() {
-    let raw =
-        "POST /submit HTTP/1.1\r\n\
+    let raw = "POST /submit HTTP/1.1\r\n\
          Host: localhost:42069\r\n\
          \r\n\
          ignored body";

@@ -1,11 +1,49 @@
-use std::io::Write;
+use std::io;
 use std::sync::mpsc;
 
 use httpfromsratch::internal::request::Request;
-use httpfromsratch::internal::response::StatusCode;
-use httpfromsratch::internal::server::{self, HandlerError};
+use httpfromsratch::internal::response::{
+    StatusCode, Writer as ResponseWriter, get_default_headers,
+};
+use httpfromsratch::internal::server;
 
 const PORT: u16 = 42069;
+
+const BAD_REQUEST_HTML: &str = concat!(
+    "<html>\n",
+    "  <head>\n",
+    "    <title>400 Bad Request</title>\n",
+    "  </head>\n",
+    "  <body>\n",
+    "    <h1>Bad Request</h1>\n",
+    "    <p>Your request honestly kinda sucked.</p>\n",
+    "  </body>\n",
+    "</html>"
+);
+
+const INTERNAL_SERVER_ERROR_HTML: &str = concat!(
+    "<html>\n",
+    "  <head>\n",
+    "    <title>500 Internal Server Error</title>\n",
+    "  </head>\n",
+    "  <body>\n",
+    "    <h1>Internal Server Error</h1>\n",
+    "    <p>Okay, you know what? This one is on me.</p>\n",
+    "  </body>\n",
+    "</html>"
+);
+
+const SUCCESS_HTML: &str = concat!(
+    "<html>\n",
+    "  <head>\n",
+    "    <title>200 OK</title>\n",
+    "  </head>\n",
+    "  <body>\n",
+    "    <h1>Success!</h1>\n",
+    "    <p>Your request was an absolute banger.</p>\n",
+    "  </body>\n",
+    "</html>"
+);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut server = server::serve(PORT, app_handler)?;
@@ -28,43 +66,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn app_handler(
-    writer: &mut dyn Write,
-    request: &Request,
-) -> Result<(), HandlerError> {
-    let request_line = request.request_line.as_ref().ok_or_else(|| {
-        HandlerError::new(
-            StatusCode::BAD_REQUEST,
-            "Missing request line\n",
-        )
-    })?;
+fn app_handler(writer: &mut ResponseWriter<'_>, request: &Request) -> io::Result<()> {
+    let request_line = request
+        .request_line
+        .as_ref()
+        .expect("a parsed request must contain a request line");
 
-    match request_line.request_target.as_str() {
-        "/yourproblem" => {
-            Err(HandlerError::new(
-                StatusCode::BAD_REQUEST,
-                "Your problem is not my problem\n",
-            ))
-        }
+    let (status_code, body) = match request_line.request_target.as_str() {
+        "/yourproblem" => (StatusCode::BAD_REQUEST, BAD_REQUEST_HTML),
 
-        "/myproblem" => {
-            Err(HandlerError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Woopsie, my bad\n",
-            ))
-        }
+        "/myproblem" => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            INTERNAL_SERVER_ERROR_HTML,
+        ),
 
-        _ => {
-            writer
-                .write_all(b"All good, frfr\n")
-                .map_err(|_| {
-                    HandlerError::new(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to write response\n",
-                    )
-                })?;
+        _ => (StatusCode::OK, SUCCESS_HTML),
+    };
 
-            Ok(())
-        }
-    }
+    let body_bytes = body.as_bytes();
+
+    let mut headers = get_default_headers(body_bytes.len());
+    headers.set("Content-Type", "text/html");
+
+    writer.write_status_line(status_code)?;
+    writer.write_headers(headers)?;
+    writer.write_body(body_bytes)?;
+
+    Ok(())
 }
