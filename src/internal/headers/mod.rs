@@ -25,6 +25,10 @@ impl Headers {
         self.map.iter()
     }
 
+    pub fn remove(&mut self, key: &str) -> Option<String> {
+        self.map.remove(&key.to_ascii_lowercase())
+    }
+
     pub fn parse(&mut self, data: &[u8]) -> io::Result<(usize, bool)> {
         let Some(pos) = find_crlf(data) else {
             return Ok((0, false));

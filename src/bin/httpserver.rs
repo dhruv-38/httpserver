@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, Read};
 use std::sync::mpsc;
 
 use httpfromsratch::internal::request::Request;
@@ -72,6 +72,12 @@ fn app_handler(writer: &mut ResponseWriter<'_>, request: &Request) -> io::Result
         .as_ref()
         .expect("a parsed request must contain a request line");
 
+    let target = request_line.request_target.as_str();
+
+    if let Some(httpbin_path) = target.strip_prefix("/httpbin/") {
+        return proxy_httpbin(writer, httpbin_path);
+    }
+
     let (status_code, body) = match request_line.request_target.as_str() {
         "/yourproblem" => (StatusCode::BAD_REQUEST, BAD_REQUEST_HTML),
 
@@ -91,6 +97,43 @@ fn app_handler(writer: &mut ResponseWriter<'_>, request: &Request) -> io::Result
     writer.write_status_line(status_code)?;
     writer.write_headers(headers)?;
     writer.write_body(body_bytes)?;
+
+    Ok(())
+}
+
+fn proxy_httpbin(writer: &mut ResponseWriter<'_>, path: &str) -> io::Result<()> {
+    let url = format!("https://httpbin.org/{path}");
+
+    let mut upstream_response = reqwest::blocking::get(&url)
+        .map_err(|error| io::Error::other(format!("httpbin request failed: {error}")))?;
+
+    let status_code = StatusCode::new(upstream_response.status().as_u16());
+
+    let mut headers = get_default_headers(0);
+
+    // The complete body length is not known before streaming.
+    headers.remove("Content-Length");
+
+    headers.set("Transfer-Encoding", "chunked");
+
+    writer.write_status_line(status_code)?;
+    writer.write_headers(headers)?;
+
+    let mut buffer = [0u8; 1024];
+
+    loop {
+        let bytes_read = upstream_response.read(&mut buffer)?;
+
+        println!("Read {bytes_read} bytes from httpbin");
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        writer.write_chunked_body(&buffer[..bytes_read])?;
+    }
+
+    writer.write_chunked_body_done()?;
 
     Ok(())
 }

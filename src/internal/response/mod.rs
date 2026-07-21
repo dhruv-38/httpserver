@@ -85,6 +85,8 @@ enum WriterState {
     StatusLineWritten,
     HeadersWritten,
     BodyWritten,
+    ChunkedBodyWritten,
+    Done,
 }
 
 pub struct Writer<'a> {
@@ -143,5 +145,56 @@ impl<'a> Writer<'a> {
         self.state = WriterState::BodyWritten;
 
         Ok(body.len())
+    }
+
+    pub fn write_chunked_body(&mut self, body: &[u8]) -> io::Result<usize> {
+        match self.state {
+            WriterState::HeadersWritten | WriterState::ChunkedBodyWritten => {}
+
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "chunked body must be written after the headers",
+                ));
+            }
+        }
+
+        if body.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "use write_chunked_body_done for the final empty chunk",
+            ));
+        }
+
+        // Write the body length in hexadecimal followed by CRLF.
+        write!(self.inner, "{:x}\r\n", body.len())?;
+
+        // Write the actual chunk data.
+        self.inner.write_all(body)?;
+
+        // Each chunk ends with CRLF.
+        self.inner.write_all(b"\r\n")?;
+
+        self.state = WriterState::ChunkedBodyWritten;
+
+        Ok(body.len())
+    }
+
+    pub fn write_chunked_body_done(&mut self) -> io::Result<usize> {
+        match self.state {
+            WriterState::HeadersWritten | WriterState::ChunkedBodyWritten => {}
+
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "chunked body must be finished after the headers",
+                ));
+            }
+        }
+
+        self.inner.write_all(b"0\r\n\r\n")?;
+        self.state = WriterState::Done;
+
+        Ok(5)
     }
 }
